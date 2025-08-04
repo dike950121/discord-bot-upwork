@@ -1,51 +1,15 @@
 /**
- * Model for managing job data
+ * Model for managing job data using Mongoose
  * Handles job CRUD operations and database interactions
  */
 
+const mongoose = require('mongoose');
+const JobSchema = require('./schemas/JobSchema');
 const Logger = require('../utils/Logger');
 
 class JobModel {
-    constructor(database) {
-        this.database = database;
-        this.tableName = 'jobs';
-        this.initTable();
-    }
-
-    /**
-     * Initialize the jobs table
-     */
-    async initTable() {
-        try {
-            const createTableSQL = `
-                CREATE TABLE IF NOT EXISTS ${this.tableName} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    upworkId TEXT UNIQUE NOT NULL,
-                    title TEXT NOT NULL,
-                    description TEXT,
-                    url TEXT,
-                    budget TEXT,
-                    skills TEXT,
-                    category TEXT,
-                    score REAL DEFAULT 0,
-                    location TEXT,
-                    clientInfo TEXT,
-                    experience TEXT,
-                    applied BOOLEAN DEFAULT FALSE,
-                    saved BOOLEAN DEFAULT FALSE,
-                    appliedAt DATETIME,
-                    savedAt DATETIME,
-                    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            `;
-            
-            await this.database.run(createTableSQL);
-            Logger.info('Jobs table initialized');
-        } catch (error) {
-            Logger.error('Error initializing jobs table:', error);
-            throw error;
-        }
+    constructor() {
+        this.Job = mongoose.model('Job', JobSchema);
     }
 
     /**
@@ -55,32 +19,11 @@ class JobModel {
      */
     async create(jobData) {
         try {
-            const sql = `
-                INSERT INTO ${this.tableName} (
-                    upworkId, title, description, url, budget, skills, 
-                    category, score, location, clientInfo, experience
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `;
+            const job = new this.Job(jobData);
+            const savedJob = await job.save();
             
-            const params = [
-                jobData.upworkId,
-                jobData.title,
-                jobData.description,
-                jobData.url,
-                JSON.stringify(jobData.budget),
-                JSON.stringify(jobData.skills),
-                jobData.category,
-                jobData.score || 0,
-                jobData.location,
-                jobData.clientInfo,
-                jobData.experience
-            ];
-            
-            const result = await this.database.run(sql, params);
-            const job = await this.findById(result.lastID);
-            
-            Logger.info(`Created job: ${job.title} (ID: ${job.id})`);
-            return job;
+            Logger.info(`Created job: ${savedJob.title} (ID: ${savedJob._id})`);
+            return savedJob;
         } catch (error) {
             Logger.error('Error creating job:', error);
             throw error;
@@ -89,19 +32,13 @@ class JobModel {
 
     /**
      * Find job by ID
-     * @param {number} id - Job ID
+     * @param {string} id - Job ID
      * @returns {Object|null} - Job object or null
      */
     async findById(id) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE id = ?`;
-            const job = await this.database.get(sql, [id]);
-            
-            if (job) {
-                return this.parseJob(job);
-            }
-            
-            return null;
+            const job = await this.Job.findById(id);
+            return job;
         } catch (error) {
             Logger.error(`Error finding job by ID ${id}:`, error);
             throw error;
@@ -115,14 +52,8 @@ class JobModel {
      */
     async findByUpworkId(upworkId) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE upworkId = ?`;
-            const job = await this.database.get(sql, [upworkId]);
-            
-            if (job) {
-                return this.parseJob(job);
-            }
-            
-            return null;
+            const job = await this.Job.findOne({ upworkId });
+            return job;
         } catch (error) {
             Logger.error(`Error finding job by Upwork ID ${upworkId}:`, error);
             throw error;
@@ -131,33 +62,22 @@ class JobModel {
 
     /**
      * Update a job
-     * @param {number} id - Job ID
+     * @param {string} id - Job ID
      * @param {Object} updateData - Update data
      * @returns {Object} - Updated job
      */
     async update(id, updateData) {
         try {
-            const fields = [];
-            const values = [];
+            const updatedJob = await this.Job.findByIdAndUpdate(
+                id,
+                updateData,
+                { new: true, runValidators: true }
+            );
             
-            Object.keys(updateData).forEach(key => {
-                if (key === 'budget' || key === 'skills') {
-                    fields.push(`${key} = ?`);
-                    values.push(JSON.stringify(updateData[key]));
-                } else {
-                    fields.push(`${key} = ?`);
-                    values.push(updateData[key]);
-                }
-            });
+            if (updatedJob) {
+                Logger.info(`Updated job: ${updatedJob.title} (ID: ${id})`);
+            }
             
-            fields.push('updatedAt = CURRENT_TIMESTAMP');
-            values.push(id);
-            
-            const sql = `UPDATE ${this.tableName} SET ${fields.join(', ')} WHERE id = ?`;
-            await this.database.run(sql, values);
-            
-            const updatedJob = await this.findById(id);
-            Logger.info(`Updated job: ${updatedJob.title} (ID: ${id})`);
             return updatedJob;
         } catch (error) {
             Logger.error(`Error updating job ${id}:`, error);
@@ -167,16 +87,19 @@ class JobModel {
 
     /**
      * Delete a job
-     * @param {number} id - Job ID
+     * @param {string} id - Job ID
      * @returns {boolean} - Success status
      */
     async delete(id) {
         try {
-            const sql = `DELETE FROM ${this.tableName} WHERE id = ?`;
-            const result = await this.database.run(sql, [id]);
+            const result = await this.Job.findByIdAndDelete(id);
+            const success = result !== null;
             
-            Logger.info(`Deleted job with ID: ${id}`);
-            return result.changes > 0;
+            if (success) {
+                Logger.info(`Deleted job with ID: ${id}`);
+            }
+            
+            return success;
         } catch (error) {
             Logger.error(`Error deleting job ${id}:`, error);
             throw error;
@@ -190,43 +113,32 @@ class JobModel {
      */
     async findWithFilters(filters = {}) {
         try {
-            let sql = `SELECT * FROM ${this.tableName}`;
-            const conditions = [];
-            const values = [];
+            const query = {};
             
             if (filters.minScore !== undefined) {
-                conditions.push('score >= ?');
-                values.push(filters.minScore);
+                query.score = { $gte: filters.minScore };
             }
             
             if (filters.category) {
-                conditions.push('category = ?');
-                values.push(filters.category);
+                query.category = filters.category;
             }
             
             if (filters.applied !== undefined) {
-                conditions.push('applied = ?');
-                values.push(filters.applied);
+                query.applied = filters.applied;
             }
             
             if (filters.saved !== undefined) {
-                conditions.push('saved = ?');
-                values.push(filters.saved);
+                query.saved = filters.saved;
             }
             
-            if (conditions.length > 0) {
-                sql += ` WHERE ${conditions.join(' AND ')}`;
-            }
-            
-            sql += ` ORDER BY createdAt DESC`;
+            let queryBuilder = this.Job.find(query).sort({ createdAt: -1 });
             
             if (filters.limit) {
-                sql += ` LIMIT ?`;
-                values.push(filters.limit);
+                queryBuilder = queryBuilder.limit(filters.limit);
             }
             
-            const jobs = await this.database.all(sql, values);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await queryBuilder;
+            return jobs;
         } catch (error) {
             Logger.error('Error finding jobs with filters:', error);
             throw error;
@@ -241,15 +153,8 @@ class JobModel {
      */
     async findByCategory(category, limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE category = ? 
-                ORDER BY createdAt DESC 
-                LIMIT ?
-            `;
-            
-            const jobs = await this.database.all(sql, [category, limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.findByCategory(category, limit);
+            return jobs;
         } catch (error) {
             Logger.error(`Error finding jobs by category ${category}:`, error);
             throw error;
@@ -264,15 +169,10 @@ class JobModel {
      */
     async findByScore(minScore, limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE score >= ? 
-                ORDER BY score DESC, createdAt DESC 
-                LIMIT ?
-            `;
-            
-            const jobs = await this.database.all(sql, [minScore, limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.find({ score: { $gte: minScore } })
+                .sort({ score: -1, createdAt: -1 })
+                .limit(limit);
+            return jobs;
         } catch (error) {
             Logger.error(`Error finding jobs by score >= ${minScore}:`, error);
             throw error;
@@ -288,15 +188,13 @@ class JobModel {
      */
     async findByDateRange(startDate, endDate, limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE createdAt BETWEEN ? AND ? 
-                ORDER BY createdAt DESC 
-                LIMIT ?
-            `;
+            const jobs = await this.Job.find({
+                createdAt: { $gte: startDate, $lte: endDate }
+            })
+            .sort({ createdAt: -1 })
+            .limit(limit);
             
-            const jobs = await this.database.all(sql, [startDate, endDate, limit]);
-            return jobs.map(job => this.parseJob(job));
+            return jobs;
         } catch (error) {
             Logger.error('Error finding jobs by date range:', error);
             throw error;
@@ -311,16 +209,8 @@ class JobModel {
      */
     async search(keyword, limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE title LIKE ? OR description LIKE ? 
-                ORDER BY createdAt DESC 
-                LIMIT ?
-            `;
-            
-            const searchTerm = `%${keyword}%`;
-            const jobs = await this.database.all(sql, [searchTerm, searchTerm, limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.search(keyword, limit);
+            return jobs;
         } catch (error) {
             Logger.error(`Error searching jobs with keyword "${keyword}":`, error);
             throw error;
@@ -335,17 +225,8 @@ class JobModel {
      */
     async findBySkills(skills, limit = 50) {
         try {
-            const conditions = skills.map(() => 'skills LIKE ?').join(' OR ');
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE ${conditions} 
-                ORDER BY createdAt DESC 
-                LIMIT ?
-            `;
-            
-            const searchTerms = skills.map(skill => `%${skill}%`);
-            const jobs = await this.database.all(sql, [...searchTerms, limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.findBySkills(skills, limit);
+            return jobs;
         } catch (error) {
             Logger.error('Error finding jobs by skills:', error);
             throw error;
@@ -361,16 +242,16 @@ class JobModel {
      */
     async findByBudget(minBudget, maxBudget, limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE budget LIKE '%"min":${minBudget}%' 
-                OR budget LIKE '%"max":${maxBudget}%' 
-                ORDER BY createdAt DESC 
-                LIMIT ?
-            `;
+            const jobs = await this.Job.find({
+                $or: [
+                    { 'budget.min': { $gte: minBudget, $lte: maxBudget } },
+                    { 'budget.max': { $gte: minBudget, $lte: maxBudget } }
+                ]
+            })
+            .sort({ createdAt: -1 })
+            .limit(limit);
             
-            const jobs = await this.database.all(sql, [limit]);
-            return jobs.map(job => this.parseJob(job));
+            return jobs;
         } catch (error) {
             Logger.error('Error finding jobs by budget:', error);
             throw error;
@@ -384,15 +265,10 @@ class JobModel {
      */
     async findApplied(limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE applied = TRUE 
-                ORDER BY appliedAt DESC 
-                LIMIT ?
-            `;
-            
-            const jobs = await this.database.all(sql, [limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.find({ applied: true })
+                .sort({ appliedAt: -1 })
+                .limit(limit);
+            return jobs;
         } catch (error) {
             Logger.error('Error finding applied jobs:', error);
             throw error;
@@ -406,15 +282,10 @@ class JobModel {
      */
     async findSaved(limit = 50) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE saved = TRUE 
-                ORDER BY savedAt DESC 
-                LIMIT ?
-            `;
-            
-            const jobs = await this.database.all(sql, [limit]);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.find({ saved: true })
+                .sort({ savedAt: -1 })
+                .limit(limit);
+            return jobs;
         } catch (error) {
             Logger.error('Error finding saved jobs:', error);
             throw error;
@@ -430,13 +301,70 @@ class JobModel {
         try {
             if (ids.length === 0) return [];
             
-            const placeholders = ids.map(() => '?').join(',');
-            const sql = `SELECT * FROM ${this.tableName} WHERE id IN (${placeholders})`;
-            
-            const jobs = await this.database.all(sql, ids);
-            return jobs.map(job => this.parseJob(job));
+            const jobs = await this.Job.find({
+                _id: { $in: ids }
+            });
+            return jobs;
         } catch (error) {
             Logger.error('Error finding jobs by IDs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Mark job as applied
+     * @param {string} id - Job ID
+     * @returns {Object} - Updated job
+     */
+    async markAsApplied(id) {
+        try {
+            const job = await this.Job.findById(id);
+            if (job) {
+                await job.markAsApplied();
+                Logger.info(`Marked job as applied: ${job.title} (ID: ${id})`);
+            }
+            return job;
+        } catch (error) {
+            Logger.error(`Error marking job as applied ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Mark job as saved
+     * @param {string} id - Job ID
+     * @returns {Object} - Updated job
+     */
+    async markAsSaved(id) {
+        try {
+            const job = await this.Job.findById(id);
+            if (job) {
+                await job.markAsSaved();
+                Logger.info(`Marked job as saved: ${job.title} (ID: ${id})`);
+            }
+            return job;
+        } catch (error) {
+            Logger.error(`Error marking job as saved ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update job score
+     * @param {string} id - Job ID
+     * @param {number} score - New score
+     * @returns {Object} - Updated job
+     */
+    async updateScore(id, score) {
+        try {
+            const job = await this.Job.findById(id);
+            if (job) {
+                await job.updateScore(score);
+                Logger.info(`Updated job score: ${job.title} (ID: ${id}, Score: ${score})`);
+            }
+            return job;
+        } catch (error) {
+            Logger.error(`Error updating job score ${id}:`, error);
             throw error;
         }
     }
@@ -447,55 +375,7 @@ class JobModel {
      */
     async getStats() {
         try {
-            const stats = {};
-            
-            // Total jobs
-            const totalResult = await this.database.get(`SELECT COUNT(*) as total FROM ${this.tableName}`);
-            stats.total = totalResult.total;
-            
-            // Average score
-            const avgResult = await this.database.get(`SELECT AVG(score) as average FROM ${this.tableName}`);
-            stats.averageScore = avgResult.average || 0;
-            
-            // Jobs by category
-            const categoryResult = await this.database.all(`
-                SELECT category, COUNT(*) as count 
-                FROM ${this.tableName} 
-                GROUP BY category 
-                ORDER BY count DESC
-            `);
-            stats.byCategory = categoryResult.reduce((acc, row) => {
-                acc[row.category] = row.count;
-                return acc;
-            }, {});
-            
-            // Jobs by score range
-            const scoreResult = await this.database.all(`
-                SELECT 
-                    CASE 
-                        WHEN score >= 8 THEN 'High (8-10)'
-                        WHEN score >= 6 THEN 'Medium (6-7.9)'
-                        WHEN score >= 4 THEN 'Low (4-5.9)'
-                        ELSE 'Very Low (0-3.9)'
-                    END as scoreRange,
-                    COUNT(*) as count
-                FROM ${this.tableName}
-                GROUP BY scoreRange
-                ORDER BY count DESC
-            `);
-            stats.byScore = scoreResult.reduce((acc, row) => {
-                acc[row.scoreRange] = row.count;
-                return acc;
-            }, {});
-            
-            // Recent jobs (last 24 hours)
-            const recentResult = await this.database.get(`
-                SELECT COUNT(*) as count 
-                FROM ${this.tableName} 
-                WHERE createdAt >= datetime('now', '-1 day')
-            `);
-            stats.recent = recentResult.count;
-            
+            const stats = await this.Job.getStats();
             return stats;
         } catch (error) {
             Logger.error('Error getting job stats:', error);
@@ -504,22 +384,48 @@ class JobModel {
     }
 
     /**
-     * Parse job data from database
-     * @param {Object} job - Raw job data from database
-     * @returns {Object} - Parsed job data
+     * Get all jobs
+     * @param {number} limit - Number of jobs to return
+     * @returns {Array} - Array of jobs
      */
-    parseJob(job) {
-        return {
-            ...job,
-            budget: job.budget ? JSON.parse(job.budget) : null,
-            skills: job.skills ? JSON.parse(job.skills) : [],
-            applied: Boolean(job.applied),
-            saved: Boolean(job.saved),
-            createdAt: new Date(job.createdAt),
-            updatedAt: new Date(job.updatedAt),
-            appliedAt: job.appliedAt ? new Date(job.appliedAt) : null,
-            savedAt: job.savedAt ? new Date(job.savedAt) : null
-        };
+    async findAll(limit = 100) {
+        try {
+            const jobs = await this.Job.find()
+                .sort({ createdAt: -1 })
+                .limit(limit);
+            return jobs;
+        } catch (error) {
+            Logger.error('Error finding all jobs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Count total jobs
+     * @returns {number} - Total job count
+     */
+    async count() {
+        try {
+            return await this.Job.countDocuments();
+        } catch (error) {
+            Logger.error('Error counting jobs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete all jobs
+     * @returns {number} - Number of deleted jobs
+     */
+    async deleteAll() {
+        try {
+            const result = await this.Job.deleteMany({});
+            Logger.info(`Deleted ${result.deletedCount} jobs`);
+            return result.deletedCount;
+        } catch (error) {
+            Logger.error('Error deleting all jobs:', error);
+            throw error;
+        }
     }
 }
 

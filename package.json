@@ -5,7 +5,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "setup": "node setup.js",
+    "test": "node test-minimal.js",
+    "test:minimal": "node test-minimal.js"
   },
   "repository": {
     "type": "git",
@@ -25,9 +27,9 @@
     "axios": "^1.6.0",
     "openai": "^4.20.0",
     "node-cron": "^3.0.3",
-    "fs-extra": "^11.1.1",
+
     "cheerio": "^1.0.0-rc.12",
-    "sqlite3": "^5.1.6"
+    "mongoose": "^8.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

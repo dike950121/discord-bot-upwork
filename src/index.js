@@ -4,9 +4,7 @@
  */
 
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
-const path = require('path');
-const fs = require('fs');
+const { Client, GatewayIntentBits } = require('discord.js');
 
 // Import controllers and services
 const UpworkController = require('./controllers/UpworkController');
@@ -45,9 +43,28 @@ class DiscordBot {
         this.services = {};
         this.models = {};
         
+        this.initializeDatabase();
         this.initializeServices();
         this.initializeControllers();
         this.setupEventHandlers();
+    }
+
+    /**
+     * Initialize MongoDB database connection
+     */
+    async initializeDatabase() {
+        Logger.info('Initializing MongoDB connection...');
+        
+        try {
+            this.database = new Database();
+            await this.database.init();
+            
+            Logger.info('MongoDB connection established successfully');
+        } catch (error) {
+            Logger.error('Failed to initialize MongoDB connection:', error);
+            Logger.warn('Bot will continue without database functionality');
+            this.database = null;
+        }
     }
 
     /**
@@ -55,9 +72,6 @@ class DiscordBot {
      */
     initializeServices() {
         Logger.info('Initializing services...');
-        
-        // Initialize database
-        this.database = new Database();
         
         // Initialize services
         this.services.openai = new OpenAIService();
@@ -74,10 +88,10 @@ class DiscordBot {
     initializeControllers() {
         Logger.info('Initializing controllers...');
         
-        // Initialize models
-        this.models.job = new JobModel(this.database);
-        this.models.profile = new ProfileModel(this.database);
-        this.models.channel = new ChannelModel(this.database);
+        // Initialize models (no longer need database parameter)
+        this.models.job = new JobModel();
+        this.models.profile = new ProfileModel();
+        this.models.channel = new ChannelModel();
         
         // Initialize controllers
         this.controllers.upwork = new UpworkController(
@@ -154,6 +168,13 @@ class DiscordBot {
         try {
             Logger.info('Starting Discord bot...');
             
+            // Check if Discord token is provided
+            if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN === 'your_discord_bot_token_here') {
+                Logger.error('DISCORD_TOKEN environment variable is required. Please set it in your .env file.');
+                Logger.error('You can run "npm run setup" to create a .env file template.');
+                process.exit(1);
+            }
+            
             // Connect to Discord
             await this.client.login(process.env.DISCORD_TOKEN);
             
@@ -161,6 +182,29 @@ class DiscordBot {
         } catch (error) {
             Logger.error('Failed to start Discord bot:', error);
             process.exit(1);
+        }
+    }
+
+    /**
+     * Gracefully shutdown the bot
+     */
+    async shutdown() {
+        Logger.info('Shutting down bot...');
+        
+        try {
+            // Close Discord connection
+            if (this.client) {
+                await this.client.destroy();
+            }
+            
+            // Close database connection
+            if (this.database) {
+                await this.database.close();
+            }
+            
+            Logger.info('Bot shutdown completed');
+        } catch (error) {
+            Logger.error('Error during shutdown:', error);
         }
     }
 }
@@ -171,13 +215,11 @@ bot.start().catch(console.error);
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-    Logger.info('Shutting down bot...');
-    await bot.client.destroy();
+    await bot.shutdown();
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-    Logger.info('Shutting down bot...');
-    await bot.client.destroy();
+    await bot.shutdown();
     process.exit(0);
 }); 

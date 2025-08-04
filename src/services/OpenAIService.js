@@ -8,9 +8,15 @@ const Logger = require('../utils/Logger');
 
 class OpenAIService {
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        // Check if OpenAI API key is available
+        if (!process.env.OPENAI_API_KEY) {
+            Logger.warn('OpenAI API key not found. Some features will be disabled.');
+            this.openai = null;
+        } else {
+            this.openai = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+        }
         
         this.model = 'gpt-4';
         this.maxTokens = 1000;
@@ -24,6 +30,11 @@ class OpenAIService {
      */
     async scoreJob(job) {
         try {
+            if (!this.openai) {
+                Logger.warn('OpenAI service not available, using default score');
+                return 5; // Default neutral score
+            }
+            
             const prompt = this.buildScoringPrompt(job);
             
             const response = await this.openai.chat.completions.create({
@@ -60,6 +71,11 @@ class OpenAIService {
      */
     async categorizeJob(job) {
         try {
+            if (!this.openai) {
+                Logger.warn('OpenAI service not available, using default category');
+                return 'other';
+            }
+            
             const prompt = this.buildCategorizationPrompt(job);
             
             const response = await this.openai.chat.completions.create({
@@ -95,6 +111,11 @@ class OpenAIService {
      */
     async analyzeJob(job) {
         try {
+            if (!this.openai) {
+                Logger.warn('OpenAI service not available, using default analysis');
+                return this.getDefaultAnalysis(job);
+            }
+            
             const prompt = this.buildAnalysisPrompt(job);
             
             const response = await this.openai.chat.completions.create({
@@ -132,6 +153,11 @@ class OpenAIService {
      */
     async findBestProfileMatch(job, profiles) {
         try {
+            if (!this.openai) {
+                Logger.warn('OpenAI service not available, using default profile match');
+                return this.parseProfileMatch('default', profiles);
+            }
+            
             const prompt = this.buildProfileMatchingPrompt(job, profiles);
             
             const response = await this.openai.chat.completions.create({
@@ -381,6 +407,11 @@ Return a JSON object with:
      */
     async testConnection() {
         try {
+            if (!this.openai) {
+                Logger.warn('OpenAI service not available for testing');
+                return false;
+            }
+            
             const response = await this.openai.chat.completions.create({
                 model: this.model,
                 messages: [

@@ -1,257 +1,85 @@
 /**
- * Database utility for SQLite operations
+ * Database utility for MongoDB operations using Mongoose
  * Provides a simple interface for database operations
  */
 
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const fs = require('fs');
+const mongoose = require('mongoose');
 const Logger = require('./Logger');
 
 class Database {
     constructor() {
-        this.dbPath = path.join(process.cwd(), 'data', 'bot.db');
-        this.ensureDataDirectory();
-        this.db = null;
-        this.init();
-    }
-
-    /**
-     * Ensure data directory exists
-     */
-    ensureDataDirectory() {
-        const dataDir = path.dirname(this.dbPath);
-        if (!fs.existsSync(dataDir)) {
-            fs.mkdirSync(dataDir, { recursive: true });
-        }
+        this.connection = null;
+        this.isConnected = false;
     }
 
     /**
      * Initialize database connection
+     * @param {string} uri - MongoDB connection URI
+     * @returns {Promise} - Connection promise
      */
-    init() {
-        return new Promise((resolve, reject) => {
-            this.db = new sqlite3.Database(this.dbPath, (err) => {
-                if (err) {
-                    Logger.error('Error opening database:', err);
-                    reject(err);
-                } else {
-                    Logger.info('Database connection established');
-                    this.enableForeignKeys();
-                    resolve();
-                }
-            });
-        });
-    }
-
-    /**
-     * Enable foreign key constraints
-     */
-    enableForeignKeys() {
-        return new Promise((resolve, reject) => {
-            this.db.run('PRAGMA foreign_keys = ON', (err) => {
-                if (err) {
-                    Logger.error('Error enabling foreign keys:', err);
-                    reject(err);
-                } else {
-                    Logger.debug('Foreign keys enabled');
-                    resolve();
-                }
-            });
-        });
-    }
-
-    /**
-     * Run a SQL statement
-     * @param {string} sql - SQL statement
-     * @param {Array} params - Parameters for the statement
-     * @returns {Promise<Object>} - Result object
-     */
-    run(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            const startTime = Date.now();
-            
-            this.db.run(sql, params, function(err) {
-                const duration = Date.now() - startTime;
-                
-                if (err) {
-                    Logger.error('Database run error:', err);
-                    Logger.databaseOperation('RUN', 'unknown', duration);
-                    reject(err);
-                } else {
-                    Logger.databaseOperation('RUN', 'unknown', duration);
-                    resolve({
-                        lastID: this.lastID,
-                        changes: this.changes
-                    });
-                }
-            });
-        });
-    }
-
-    /**
-     * Get a single row
-     * @param {string} sql - SQL statement
-     * @param {Array} params - Parameters for the statement
-     * @returns {Promise<Object|null>} - Row object or null
-     */
-    get(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            const startTime = Date.now();
-            
-            this.db.get(sql, params, (err, row) => {
-                const duration = Date.now() - startTime;
-                
-                if (err) {
-                    Logger.error('Database get error:', err);
-                    Logger.databaseOperation('GET', 'unknown', duration);
-                    reject(err);
-                } else {
-                    Logger.databaseOperation('GET', 'unknown', duration);
-                    resolve(row);
-                }
-            });
-        });
-    }
-
-    /**
-     * Get all rows
-     * @param {string} sql - SQL statement
-     * @param {Array} params - Parameters for the statement
-     * @returns {Promise<Array>} - Array of row objects
-     */
-    all(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            const startTime = Date.now();
-            
-            this.db.all(sql, params, (err, rows) => {
-                const duration = Date.now() - startTime;
-                
-                if (err) {
-                    Logger.error('Database all error:', err);
-                    Logger.databaseOperation('ALL', 'unknown', duration);
-                    reject(err);
-                } else {
-                    Logger.databaseOperation('ALL', 'unknown', duration);
-                    resolve(rows);
-                }
-            });
-        });
-    }
-
-    /**
-     * Execute multiple SQL statements
-     * @param {Array} statements - Array of SQL statements
-     * @returns {Promise<Array>} - Array of results
-     */
-    async executeMultiple(statements) {
-        const results = [];
-        
-        for (const statement of statements) {
-            try {
-                const result = await this.run(statement.sql, statement.params || []);
-                results.push(result);
-            } catch (error) {
-                Logger.error('Error executing statement:', error);
-                throw error;
-            }
-        }
-        
-        return results;
-    }
-
-    /**
-     * Begin a transaction
-     * @returns {Promise} - Transaction promise
-     */
-    beginTransaction() {
-        return new Promise((resolve, reject) => {
-            this.db.run('BEGIN TRANSACTION', (err) => {
-                if (err) {
-                    Logger.error('Error beginning transaction:', err);
-                    reject(err);
-                } else {
-                    Logger.debug('Transaction begun');
-                    resolve();
-                }
-            });
-        });
-    }
-
-    /**
-     * Commit a transaction
-     * @returns {Promise} - Commit promise
-     */
-    commitTransaction() {
-        return new Promise((resolve, reject) => {
-            this.db.run('COMMIT', (err) => {
-                if (err) {
-                    Logger.error('Error committing transaction:', err);
-                    reject(err);
-                } else {
-                    Logger.debug('Transaction committed');
-                    resolve();
-                }
-            });
-        });
-    }
-
-    /**
-     * Rollback a transaction
-     * @returns {Promise} - Rollback promise
-     */
-    rollbackTransaction() {
-        return new Promise((resolve, reject) => {
-            this.db.run('ROLLBACK', (err) => {
-                if (err) {
-                    Logger.error('Error rolling back transaction:', err);
-                    reject(err);
-                } else {
-                    Logger.debug('Transaction rolled back');
-                    resolve();
-                }
-            });
-        });
-    }
-
-    /**
-     * Execute a transaction
-     * @param {Function} callback - Transaction callback
-     * @returns {Promise} - Transaction result
-     */
-    async transaction(callback) {
+    async init(uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/discord-bot-upwork') {
         try {
-            await this.beginTransaction();
-            const result = await callback(this);
-            await this.commitTransaction();
-            return result;
+            // Set mongoose options
+            mongoose.set('strictQuery', false);
+            
+            // Connect to MongoDB
+            this.connection = await mongoose.connect(uri, {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                maxPoolSize: 10,
+                serverSelectionTimeoutMS: 5000,
+                socketTimeoutMS: 45000,
+            });
+
+            this.isConnected = true;
+            Logger.info('MongoDB connection established');
+            
+            // Handle connection events
+            mongoose.connection.on('error', (err) => {
+                Logger.error('MongoDB connection error:', err);
+                this.isConnected = false;
+            });
+
+            mongoose.connection.on('disconnected', () => {
+                Logger.warn('MongoDB connection disconnected');
+                this.isConnected = false;
+            });
+
+            mongoose.connection.on('reconnected', () => {
+                Logger.info('MongoDB connection reconnected');
+                this.isConnected = true;
+            });
+
+            return this.connection;
         } catch (error) {
-            await this.rollbackTransaction();
+            Logger.error('Error connecting to MongoDB:', error);
+            this.isConnected = false;
             throw error;
         }
     }
 
     /**
-     * Backup database
-     * @param {string} backupPath - Backup file path
-     * @returns {Promise} - Backup promise
+     * Get database connection
+     * @returns {Object} - Mongoose connection
      */
-    backup(backupPath) {
-        return new Promise((resolve, reject) => {
-            const backupDb = new sqlite3.Database(backupPath);
-            
-            this.db.backup(backupDb, (err) => {
-                backupDb.close();
-                
-                if (err) {
-                    Logger.error('Error backing up database:', err);
-                    reject(err);
-                } else {
-                    Logger.info(`Database backed up to: ${backupPath}`);
-                    resolve();
-                }
-            });
-        });
+    getConnection() {
+        return this.connection;
+    }
+
+    /**
+     * Get mongoose instance
+     * @returns {Object} - Mongoose instance
+     */
+    getMongoose() {
+        return mongoose;
+    }
+
+    /**
+     * Check if database is connected
+     * @returns {boolean} - Connection status
+     */
+    isConnected() {
+        return this.isConnected && mongoose.connection.readyState === 1;
     }
 
     /**
@@ -262,27 +90,66 @@ class Database {
         try {
             const stats = {};
             
-            // Get table information
-            const tables = await this.all(`
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name NOT LIKE 'sqlite_%'
-            `);
+            // Get collection names
+            const collections = await mongoose.connection.db.listCollections().toArray();
+            stats.collections = collections.length;
             
-            stats.tables = tables.length;
-            
-            // Get row counts for each table
-            for (const table of tables) {
-                const countResult = await this.get(`SELECT COUNT(*) as count FROM ${table.name}`);
-                stats[table.name] = countResult.count;
+            // Get document counts for each collection
+            for (const collection of collections) {
+                const count = await mongoose.connection.db.collection(collection.name).countDocuments();
+                stats[collection.name] = count;
             }
             
-            // Get database size
-            const dbStats = fs.statSync(this.dbPath);
-            stats.size = `${Math.round(dbStats.size / 1024)}KB`;
+            // Get database info
+            const dbStats = await mongoose.connection.db.stats();
+            stats.size = `${Math.round(dbStats.dataSize / 1024)}KB`;
+            stats.storageSize = `${Math.round(dbStats.storageSize / 1024)}KB`;
             
             return stats;
         } catch (error) {
             Logger.error('Error getting database stats:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Create indexes for collections
+     * @param {Array} indexDefinitions - Array of index definitions
+     * @returns {Promise} - Index creation promise
+     */
+    async createIndexes(indexDefinitions) {
+        try {
+            for (const indexDef of indexDefinitions) {
+                const { collection, indexes } = indexDef;
+                const collectionRef = mongoose.connection.db.collection(collection);
+                
+                for (const index of indexes) {
+                    await collectionRef.createIndex(index.fields, index.options);
+                    Logger.debug(`Created index on ${collection}: ${JSON.stringify(index.fields)}`);
+                }
+            }
+            
+            Logger.info('Database indexes created successfully');
+        } catch (error) {
+            Logger.error('Error creating database indexes:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Backup database
+     * @param {string} backupPath - Backup directory path
+     * @returns {Promise} - Backup promise
+     */
+    async backup(backupPath) {
+        try {
+            // This would require mongodump to be installed
+            // For now, we'll just log the backup request
+            Logger.info(`Database backup requested to: ${backupPath}`);
+            Logger.warn('Manual backup required - use mongodump command');
+            return true;
+        } catch (error) {
+            Logger.error('Error backing up database:', error);
             throw error;
         }
     }
@@ -293,9 +160,18 @@ class Database {
      */
     async optimize() {
         try {
-            await this.run('VACUUM');
-            await this.run('ANALYZE');
-            Logger.info('Database optimized');
+            // MongoDB handles optimization automatically
+            // We can run some maintenance operations here
+            const collections = await mongoose.connection.db.listCollections().toArray();
+            
+            for (const collection of collections) {
+                await mongoose.connection.db.command({
+                    compact: collection.name,
+                    force: true
+                });
+            }
+            
+            Logger.info('Database optimization completed');
         } catch (error) {
             Logger.error('Error optimizing database:', error);
             throw error;
@@ -306,34 +182,67 @@ class Database {
      * Close database connection
      * @returns {Promise} - Close promise
      */
-    close() {
-        return new Promise((resolve, reject) => {
-            this.db.close((err) => {
-                if (err) {
-                    Logger.error('Error closing database:', err);
-                    reject(err);
-                } else {
-                    Logger.info('Database connection closed');
-                    resolve();
-                }
-            });
-        });
+    async close() {
+        try {
+            if (this.connection) {
+                await mongoose.connection.close();
+                this.isConnected = false;
+                Logger.info('MongoDB connection closed');
+            }
+        } catch (error) {
+            Logger.error('Error closing database connection:', error);
+            throw error;
+        }
     }
 
     /**
-     * Check if database is connected
-     * @returns {boolean} - Connection status
+     * Drop database (use with caution)
+     * @returns {Promise} - Drop promise
      */
-    isConnected() {
-        return this.db !== null;
+    async dropDatabase() {
+        try {
+            await mongoose.connection.db.dropDatabase();
+            Logger.warn('Database dropped');
+        } catch (error) {
+            Logger.error('Error dropping database:', error);
+            throw error;
+        }
     }
 
     /**
-     * Get database path
-     * @returns {string} - Database file path
+     * Get database name
+     * @returns {string} - Database name
      */
-    getPath() {
-        return this.dbPath;
+    getDatabaseName() {
+        return mongoose.connection.db.databaseName;
+    }
+
+    /**
+     * Health check
+     * @returns {Promise<Object>} - Health status
+     */
+    async healthCheck() {
+        try {
+            const status = {
+                connected: this.isConnected(),
+                readyState: mongoose.connection.readyState,
+                database: this.getDatabaseName(),
+                collections: []
+            };
+
+            if (this.isConnected()) {
+                const collections = await mongoose.connection.db.listCollections().toArray();
+                status.collections = collections.map(col => col.name);
+            }
+
+            return status;
+        } catch (error) {
+            Logger.error('Error performing health check:', error);
+            return {
+                connected: false,
+                error: error.message
+            };
+        }
     }
 }
 

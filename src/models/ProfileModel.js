@@ -1,43 +1,15 @@
 /**
- * Model for managing user profile data
+ * Model for managing user profile data using Mongoose
  * Handles profile CRUD operations and database interactions
  */
 
+const mongoose = require('mongoose');
+const ProfileSchema = require('./schemas/ProfileSchema');
 const Logger = require('../utils/Logger');
 
 class ProfileModel {
-    constructor(database) {
-        this.database = database;
-        this.tableName = 'profiles';
-        this.initTable();
-    }
-
-    /**
-     * Initialize the profiles table
-     */
-    async initTable() {
-        try {
-            const createTableSQL = `
-                CREATE TABLE IF NOT EXISTS ${this.tableName} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    description TEXT,
-                    skills TEXT,
-                    experience TEXT,
-                    hourlyRate REAL NOT NULL,
-                    categories TEXT,
-                    portfolio TEXT,
-                    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            `;
-            
-            await this.database.run(createTableSQL);
-            Logger.info('Profiles table initialized');
-        } catch (error) {
-            Logger.error('Error initializing profiles table:', error);
-            throw error;
-        }
+    constructor() {
+        this.Profile = mongoose.model('Profile', ProfileSchema);
     }
 
     /**
@@ -47,27 +19,11 @@ class ProfileModel {
      */
     async create(profileData) {
         try {
-            const sql = `
-                INSERT INTO ${this.tableName} (
-                    name, description, skills, experience, hourlyRate, categories, portfolio
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            `;
+            const profile = new this.Profile(profileData);
+            const savedProfile = await profile.save();
             
-            const params = [
-                profileData.name,
-                profileData.description,
-                JSON.stringify(profileData.skills),
-                JSON.stringify(profileData.experience),
-                profileData.hourlyRate,
-                JSON.stringify(profileData.categories || []),
-                profileData.portfolio || ''
-            ];
-            
-            const result = await this.database.run(sql, params);
-            const profile = await this.findById(result.lastID);
-            
-            Logger.info(`Created profile: ${profile.name} (ID: ${profile.id})`);
-            return profile;
+            Logger.info(`Created profile: ${savedProfile.name} (ID: ${savedProfile._id})`);
+            return savedProfile;
         } catch (error) {
             Logger.error('Error creating profile:', error);
             throw error;
@@ -76,19 +32,13 @@ class ProfileModel {
 
     /**
      * Find profile by ID
-     * @param {number} id - Profile ID
+     * @param {string} id - Profile ID
      * @returns {Object|null} - Profile object or null
      */
     async findById(id) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE id = ?`;
-            const profile = await this.database.get(sql, [id]);
-            
-            if (profile) {
-                return this.parseProfile(profile);
-            }
-            
-            return null;
+            const profile = await this.Profile.findById(id);
+            return profile;
         } catch (error) {
             Logger.error(`Error finding profile by ID ${id}:`, error);
             throw error;
@@ -102,14 +52,8 @@ class ProfileModel {
      */
     async findByName(name) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE name = ?`;
-            const profile = await this.database.get(sql, [name]);
-            
-            if (profile) {
-                return this.parseProfile(profile);
-            }
-            
-            return null;
+            const profile = await this.Profile.findOne({ name });
+            return profile;
         } catch (error) {
             Logger.error(`Error finding profile by name ${name}:`, error);
             throw error;
@@ -118,33 +62,22 @@ class ProfileModel {
 
     /**
      * Update a profile
-     * @param {number} id - Profile ID
+     * @param {string} id - Profile ID
      * @param {Object} updateData - Update data
      * @returns {Object} - Updated profile
      */
     async update(id, updateData) {
         try {
-            const fields = [];
-            const values = [];
+            const updatedProfile = await this.Profile.findByIdAndUpdate(
+                id,
+                updateData,
+                { new: true, runValidators: true }
+            );
             
-            Object.keys(updateData).forEach(key => {
-                if (key === 'skills' || key === 'experience' || key === 'categories') {
-                    fields.push(`${key} = ?`);
-                    values.push(JSON.stringify(updateData[key]));
-                } else {
-                    fields.push(`${key} = ?`);
-                    values.push(updateData[key]);
-                }
-            });
+            if (updatedProfile) {
+                Logger.info(`Updated profile: ${updatedProfile.name} (ID: ${id})`);
+            }
             
-            fields.push('updatedAt = CURRENT_TIMESTAMP');
-            values.push(id);
-            
-            const sql = `UPDATE ${this.tableName} SET ${fields.join(', ')} WHERE id = ?`;
-            await this.database.run(sql, values);
-            
-            const updatedProfile = await this.findById(id);
-            Logger.info(`Updated profile: ${updatedProfile.name} (ID: ${id})`);
             return updatedProfile;
         } catch (error) {
             Logger.error(`Error updating profile ${id}:`, error);
@@ -154,16 +87,19 @@ class ProfileModel {
 
     /**
      * Delete a profile
-     * @param {number} id - Profile ID
+     * @param {string} id - Profile ID
      * @returns {boolean} - Success status
      */
     async delete(id) {
         try {
-            const sql = `DELETE FROM ${this.tableName} WHERE id = ?`;
-            const result = await this.database.run(sql, [id]);
+            const result = await this.Profile.findByIdAndDelete(id);
+            const success = result !== null;
             
-            Logger.info(`Deleted profile with ID: ${id}`);
-            return result.changes > 0;
+            if (success) {
+                Logger.info(`Deleted profile with ID: ${id}`);
+            }
+            
+            return success;
         } catch (error) {
             Logger.error(`Error deleting profile ${id}:`, error);
             throw error;
@@ -176,9 +112,8 @@ class ProfileModel {
      */
     async findAll() {
         try {
-            const sql = `SELECT * FROM ${this.tableName} ORDER BY name`;
-            const profiles = await this.database.all(sql);
-            return profiles.map(profile => this.parseProfile(profile));
+            const profiles = await this.Profile.find().sort({ name: 1 });
+            return profiles;
         } catch (error) {
             Logger.error('Error finding all profiles:', error);
             throw error;
@@ -192,16 +127,8 @@ class ProfileModel {
      */
     async findBySkills(skills) {
         try {
-            const conditions = skills.map(() => 'skills LIKE ?').join(' OR ');
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE ${conditions} 
-                ORDER BY name
-            `;
-            
-            const searchTerms = skills.map(skill => `%${skill}%`);
-            const profiles = await this.database.all(sql, searchTerms);
-            return profiles.map(profile => this.parseProfile(profile));
+            const profiles = await this.Profile.findBySkills(skills);
+            return profiles;
         } catch (error) {
             Logger.error('Error finding profiles by skills:', error);
             throw error;
@@ -215,14 +142,8 @@ class ProfileModel {
      */
     async findByCategory(category) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE categories LIKE ? 
-                ORDER BY name
-            `;
-            
-            const profiles = await this.database.all(sql, [`%${category}%`]);
-            return profiles.map(profile => this.parseProfile(profile));
+            const profiles = await this.Profile.findByCategory(category);
+            return profiles;
         } catch (error) {
             Logger.error(`Error finding profiles by category ${category}:`, error);
             throw error;
@@ -237,16 +158,140 @@ class ProfileModel {
      */
     async findByRateRange(minRate, maxRate) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE hourlyRate >= ? AND hourlyRate <= ? 
-                ORDER BY hourlyRate
-            `;
-            
-            const profiles = await this.database.all(sql, [minRate, maxRate]);
-            return profiles.map(profile => this.parseProfile(profile));
+            const profiles = await this.Profile.findByRateRange(minRate, maxRate);
+            return profiles;
         } catch (error) {
             Logger.error('Error finding profiles by rate range:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find profiles by experience level
+     * @param {string} level - Experience level
+     * @returns {Array} - Array of profiles
+     */
+    async findByExperienceLevel(level) {
+        try {
+            const profiles = await this.Profile.findByExperienceLevel(level);
+            return profiles;
+        } catch (error) {
+            Logger.error(`Error finding profiles by experience level ${level}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Search profiles
+     * @param {string} keyword - Search keyword
+     * @returns {Array} - Array of profiles
+     */
+    async search(keyword) {
+        try {
+            const profiles = await this.Profile.search(keyword);
+            return profiles;
+        } catch (error) {
+            Logger.error(`Error searching profiles with keyword "${keyword}":`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Add skill to profile
+     * @param {string} id - Profile ID
+     * @param {string} skill - Skill to add
+     * @returns {Object} - Updated profile
+     */
+    async addSkill(id, skill) {
+        try {
+            const profile = await this.Profile.findById(id);
+            if (profile) {
+                await profile.addSkill(skill);
+                Logger.info(`Added skill to profile: ${profile.name} (ID: ${id}, Skill: ${skill})`);
+            }
+            return profile;
+        } catch (error) {
+            Logger.error(`Error adding skill to profile ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Remove skill from profile
+     * @param {string} id - Profile ID
+     * @param {string} skill - Skill to remove
+     * @returns {Object} - Updated profile
+     */
+    async removeSkill(id, skill) {
+        try {
+            const profile = await this.Profile.findById(id);
+            if (profile) {
+                await profile.removeSkill(skill);
+                Logger.info(`Removed skill from profile: ${profile.name} (ID: ${id}, Skill: ${skill})`);
+            }
+            return profile;
+        } catch (error) {
+            Logger.error(`Error removing skill from profile ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Add category to profile
+     * @param {string} id - Profile ID
+     * @param {string} category - Category to add
+     * @returns {Object} - Updated profile
+     */
+    async addCategory(id, category) {
+        try {
+            const profile = await this.Profile.findById(id);
+            if (profile) {
+                await profile.addCategory(category);
+                Logger.info(`Added category to profile: ${profile.name} (ID: ${id}, Category: ${category})`);
+            }
+            return profile;
+        } catch (error) {
+            Logger.error(`Error adding category to profile ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Remove category from profile
+     * @param {string} id - Profile ID
+     * @param {string} category - Category to remove
+     * @returns {Object} - Updated profile
+     */
+    async removeCategory(id, category) {
+        try {
+            const profile = await this.Profile.findById(id);
+            if (profile) {
+                await profile.removeCategory(category);
+                Logger.info(`Removed category from profile: ${profile.name} (ID: ${id}, Category: ${category})`);
+            }
+            return profile;
+        } catch (error) {
+            Logger.error(`Error removing category from profile ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update profile hourly rate
+     * @param {string} id - Profile ID
+     * @param {number} newRate - New hourly rate
+     * @returns {Object} - Updated profile
+     */
+    async updateHourlyRate(id, newRate) {
+        try {
+            const profile = await this.Profile.findById(id);
+            if (profile) {
+                await profile.updateHourlyRate(newRate);
+                Logger.info(`Updated profile hourly rate: ${profile.name} (ID: ${id}, Rate: $${newRate})`);
+            }
+            return profile;
+        } catch (error) {
+            Logger.error(`Error updating profile hourly rate ${id}:`, error);
             throw error;
         }
     }
@@ -257,44 +302,7 @@ class ProfileModel {
      */
     async getStats() {
         try {
-            const stats = {};
-            
-            // Total profiles
-            const totalResult = await this.database.get(`SELECT COUNT(*) as total FROM ${this.tableName}`);
-            stats.total = totalResult.total;
-            
-            // Average hourly rate
-            const avgResult = await this.database.get(`SELECT AVG(hourlyRate) as average FROM ${this.tableName}`);
-            stats.averageRate = avgResult.average || 0;
-            
-            // Skill distribution
-            const skillResult = await this.database.all(`
-                SELECT skills FROM ${this.tableName}
-            `);
-            
-            const skillCounts = {};
-            skillResult.forEach(row => {
-                const skills = JSON.parse(row.skills);
-                skills.forEach(skill => {
-                    skillCounts[skill] = (skillCounts[skill] || 0) + 1;
-                });
-            });
-            stats.skillDistribution = skillCounts;
-            
-            // Category distribution
-            const categoryResult = await this.database.all(`
-                SELECT categories FROM ${this.tableName}
-            `);
-            
-            const categoryCounts = {};
-            categoryResult.forEach(row => {
-                const categories = JSON.parse(row.categories);
-                categories.forEach(category => {
-                    categoryCounts[category] = (categoryCounts[category] || 0) + 1;
-                });
-            });
-            stats.categoryDistribution = categoryCounts;
-            
+            const stats = await this.Profile.getStats();
             return stats;
         } catch (error) {
             Logger.error('Error getting profile stats:', error);
@@ -303,20 +311,67 @@ class ProfileModel {
     }
 
     /**
-     * Parse profile data from database
-     * @param {Object} profile - Raw profile data from database
-     * @returns {Object} - Parsed profile data
+     * Count total profiles
+     * @returns {number} - Total profile count
      */
-    parseProfile(profile) {
-        return {
-            ...profile,
-            skills: profile.skills ? JSON.parse(profile.skills) : [],
-            experience: profile.experience ? JSON.parse(profile.experience) : {},
-            categories: profile.categories ? JSON.parse(profile.categories) : [],
-            hourlyRate: parseFloat(profile.hourlyRate),
-            createdAt: new Date(profile.createdAt),
-            updatedAt: new Date(profile.updatedAt)
-        };
+    async count() {
+        try {
+            return await this.Profile.countDocuments();
+        } catch (error) {
+            Logger.error('Error counting profiles:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete all profiles
+     * @returns {number} - Number of deleted profiles
+     */
+    async deleteAll() {
+        try {
+            const result = await this.Profile.deleteMany({});
+            Logger.info(`Deleted ${result.deletedCount} profiles`);
+            return result.deletedCount;
+        } catch (error) {
+            Logger.error('Error deleting all profiles:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find profiles by multiple IDs
+     * @param {Array} ids - Array of profile IDs
+     * @returns {Array} - Array of profiles
+     */
+    async findByIds(ids) {
+        try {
+            if (ids.length === 0) return [];
+            
+            const profiles = await this.Profile.find({
+                _id: { $in: ids }
+            });
+            return profiles;
+        } catch (error) {
+            Logger.error('Error finding profiles by IDs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find profiles by name pattern
+     * @param {string} namePattern - Name pattern to search for
+     * @returns {Array} - Array of profiles
+     */
+    async findByNamePattern(namePattern) {
+        try {
+            const profiles = await this.Profile.find({
+                name: { $regex: namePattern, $options: 'i' }
+            }).sort({ name: 1 });
+            return profiles;
+        } catch (error) {
+            Logger.error(`Error finding profiles by name pattern "${namePattern}":`, error);
+            throw error;
+        }
     }
 }
 

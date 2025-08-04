@@ -1,41 +1,15 @@
 /**
- * Model for managing Discord channel data
+ * Model for managing Discord channel data using Mongoose
  * Handles channel CRUD operations and database interactions
  */
 
+const mongoose = require('mongoose');
+const ChannelSchema = require('./schemas/ChannelSchema');
 const Logger = require('../utils/Logger');
 
 class ChannelModel {
-    constructor(database) {
-        this.database = database;
-        this.tableName = 'channels';
-        this.initTable();
-    }
-
-    /**
-     * Initialize the channels table
-     */
-    async initTable() {
-        try {
-            const createTableSQL = `
-                CREATE TABLE IF NOT EXISTS ${this.tableName} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    discordId TEXT UNIQUE NOT NULL,
-                    guildId TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    parentCategoryId TEXT,
-                    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            `;
-            
-            await this.database.run(createTableSQL);
-            Logger.info('Channels table initialized');
-        } catch (error) {
-            Logger.error('Error initializing channels table:', error);
-            throw error;
-        }
+    constructor() {
+        this.Channel = mongoose.model('Channel', ChannelSchema);
     }
 
     /**
@@ -45,25 +19,11 @@ class ChannelModel {
      */
     async create(channelData) {
         try {
-            const sql = `
-                INSERT INTO ${this.tableName} (
-                    discordId, guildId, name, category, parentCategoryId
-                ) VALUES (?, ?, ?, ?, ?)
-            `;
+            const channel = new this.Channel(channelData);
+            const savedChannel = await channel.save();
             
-            const params = [
-                channelData.discordId,
-                channelData.guildId,
-                channelData.name,
-                channelData.category,
-                channelData.parentCategoryId || null
-            ];
-            
-            const result = await this.database.run(sql, params);
-            const channel = await this.findById(result.lastID);
-            
-            Logger.info(`Created channel: ${channel.name} (ID: ${channel.id})`);
-            return channel;
+            Logger.info(`Created channel: ${savedChannel.name} (ID: ${savedChannel._id})`);
+            return savedChannel;
         } catch (error) {
             Logger.error('Error creating channel:', error);
             throw error;
@@ -72,19 +32,13 @@ class ChannelModel {
 
     /**
      * Find channel by ID
-     * @param {number} id - Channel ID
+     * @param {string} id - Channel ID
      * @returns {Object|null} - Channel object or null
      */
     async findById(id) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE id = ?`;
-            const channel = await this.database.get(sql, [id]);
-            
-            if (channel) {
-                return this.parseChannel(channel);
-            }
-            
-            return null;
+            const channel = await this.Channel.findById(id);
+            return channel;
         } catch (error) {
             Logger.error(`Error finding channel by ID ${id}:`, error);
             throw error;
@@ -98,14 +52,8 @@ class ChannelModel {
      */
     async findByDiscordId(discordId) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE discordId = ?`;
-            const channel = await this.database.get(sql, [discordId]);
-            
-            if (channel) {
-                return this.parseChannel(channel);
-            }
-            
-            return null;
+            const channel = await this.Channel.findOne({ discordId });
+            return channel;
         } catch (error) {
             Logger.error(`Error finding channel by Discord ID ${discordId}:`, error);
             throw error;
@@ -119,14 +67,8 @@ class ChannelModel {
      */
     async findByCategory(category) {
         try {
-            const sql = `SELECT * FROM ${this.tableName} WHERE category = ?`;
-            const channel = await this.database.get(sql, [category]);
-            
-            if (channel) {
-                return this.parseChannel(channel);
-            }
-            
-            return null;
+            const channel = await this.Channel.findOne({ category });
+            return channel;
         } catch (error) {
             Logger.error(`Error finding channel by category ${category}:`, error);
             throw error;
@@ -135,28 +77,22 @@ class ChannelModel {
 
     /**
      * Update a channel
-     * @param {number} id - Channel ID
+     * @param {string} id - Channel ID
      * @param {Object} updateData - Update data
      * @returns {Object} - Updated channel
      */
     async update(id, updateData) {
         try {
-            const fields = [];
-            const values = [];
+            const updatedChannel = await this.Channel.findByIdAndUpdate(
+                id,
+                updateData,
+                { new: true, runValidators: true }
+            );
             
-            Object.keys(updateData).forEach(key => {
-                fields.push(`${key} = ?`);
-                values.push(updateData[key]);
-            });
+            if (updatedChannel) {
+                Logger.info(`Updated channel: ${updatedChannel.name} (ID: ${id})`);
+            }
             
-            fields.push('updatedAt = CURRENT_TIMESTAMP');
-            values.push(id);
-            
-            const sql = `UPDATE ${this.tableName} SET ${fields.join(', ')} WHERE id = ?`;
-            await this.database.run(sql, values);
-            
-            const updatedChannel = await this.findById(id);
-            Logger.info(`Updated channel: ${updatedChannel.name} (ID: ${id})`);
             return updatedChannel;
         } catch (error) {
             Logger.error(`Error updating channel ${id}:`, error);
@@ -166,16 +102,19 @@ class ChannelModel {
 
     /**
      * Delete a channel
-     * @param {number} id - Channel ID
+     * @param {string} id - Channel ID
      * @returns {boolean} - Success status
      */
     async delete(id) {
         try {
-            const sql = `DELETE FROM ${this.tableName} WHERE id = ?`;
-            const result = await this.database.run(sql, [id]);
+            const result = await this.Channel.findByIdAndDelete(id);
+            const success = result !== null;
             
-            Logger.info(`Deleted channel with ID: ${id}`);
-            return result.changes > 0;
+            if (success) {
+                Logger.info(`Deleted channel with ID: ${id}`);
+            }
+            
+            return success;
         } catch (error) {
             Logger.error(`Error deleting channel ${id}:`, error);
             throw error;
@@ -188,9 +127,8 @@ class ChannelModel {
      */
     async findAll() {
         try {
-            const sql = `SELECT * FROM ${this.tableName} ORDER BY name`;
-            const channels = await this.database.all(sql);
-            return channels.map(channel => this.parseChannel(channel));
+            const channels = await this.Channel.find().sort({ name: 1 });
+            return channels;
         } catch (error) {
             Logger.error('Error finding all channels:', error);
             throw error;
@@ -204,14 +142,8 @@ class ChannelModel {
      */
     async findByGuild(guildId) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE guildId = ? 
-                ORDER BY name
-            `;
-            
-            const channels = await this.database.all(sql, [guildId]);
-            return channels.map(channel => this.parseChannel(channel));
+            const channels = await this.Channel.findByGuild(guildId);
+            return channels;
         } catch (error) {
             Logger.error(`Error finding channels by guild ${guildId}:`, error);
             throw error;
@@ -225,16 +157,50 @@ class ChannelModel {
      */
     async findByParentCategory(parentCategoryId) {
         try {
-            const sql = `
-                SELECT * FROM ${this.tableName} 
-                WHERE parentCategoryId = ? 
-                ORDER BY name
-            `;
-            
-            const channels = await this.database.all(sql, [parentCategoryId]);
-            return channels.map(channel => this.parseChannel(channel));
+            const channels = await this.Channel.findByParentCategory(parentCategoryId);
+            return channels;
         } catch (error) {
             Logger.error(`Error finding channels by parent category ${parentCategoryId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update channel category
+     * @param {string} id - Channel ID
+     * @param {string} newCategory - New category
+     * @returns {Object} - Updated channel
+     */
+    async updateCategory(id, newCategory) {
+        try {
+            const channel = await this.Channel.findById(id);
+            if (channel) {
+                await channel.updateCategory(newCategory);
+                Logger.info(`Updated channel category: ${channel.name} (ID: ${id}, Category: ${newCategory})`);
+            }
+            return channel;
+        } catch (error) {
+            Logger.error(`Error updating channel category ${id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update channel parent category
+     * @param {string} id - Channel ID
+     * @param {string} parentCategoryId - Parent category ID
+     * @returns {Object} - Updated channel
+     */
+    async updateParentCategory(id, parentCategoryId) {
+        try {
+            const channel = await this.Channel.findById(id);
+            if (channel) {
+                await channel.updateParentCategory(parentCategoryId);
+                Logger.info(`Updated channel parent category: ${channel.name} (ID: ${id})`);
+            }
+            return channel;
+        } catch (error) {
+            Logger.error(`Error updating channel parent category ${id}:`, error);
             throw error;
         }
     }
@@ -245,32 +211,7 @@ class ChannelModel {
      */
     async getStats() {
         try {
-            const stats = {};
-            
-            // Total channels
-            const totalResult = await this.database.get(`SELECT COUNT(*) as total FROM ${this.tableName}`);
-            stats.total = totalResult.total;
-            
-            // Channels by category
-            const categoryResult = await this.database.all(`
-                SELECT category, COUNT(*) as count 
-                FROM ${this.tableName} 
-                GROUP BY category 
-                ORDER BY count DESC
-            `);
-            stats.byCategory = categoryResult.reduce((acc, row) => {
-                acc[row.category] = row.count;
-                return acc;
-            }, {});
-            
-            // Recent channels (last 7 days)
-            const recentResult = await this.database.get(`
-                SELECT COUNT(*) as count 
-                FROM ${this.tableName} 
-                WHERE createdAt >= datetime('now', '-7 days')
-            `);
-            stats.recent = recentResult.count;
-            
+            const stats = await this.Channel.getStats();
             return stats;
         } catch (error) {
             Logger.error('Error getting channel stats:', error);
@@ -279,16 +220,67 @@ class ChannelModel {
     }
 
     /**
-     * Parse channel data from database
-     * @param {Object} channel - Raw channel data from database
-     * @returns {Object} - Parsed channel data
+     * Count total channels
+     * @returns {number} - Total channel count
      */
-    parseChannel(channel) {
-        return {
-            ...channel,
-            createdAt: new Date(channel.createdAt),
-            updatedAt: new Date(channel.updatedAt)
-        };
+    async count() {
+        try {
+            return await this.Channel.countDocuments();
+        } catch (error) {
+            Logger.error('Error counting channels:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete all channels
+     * @returns {number} - Number of deleted channels
+     */
+    async deleteAll() {
+        try {
+            const result = await this.Channel.deleteMany({});
+            Logger.info(`Deleted ${result.deletedCount} channels`);
+            return result.deletedCount;
+        } catch (error) {
+            Logger.error('Error deleting all channels:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find channels by multiple Discord IDs
+     * @param {Array} discordIds - Array of Discord channel IDs
+     * @returns {Array} - Array of channels
+     */
+    async findByDiscordIds(discordIds) {
+        try {
+            if (discordIds.length === 0) return [];
+            
+            const channels = await this.Channel.find({
+                discordId: { $in: discordIds }
+            });
+            return channels;
+        } catch (error) {
+            Logger.error('Error finding channels by Discord IDs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find channels by name pattern
+     * @param {string} namePattern - Name pattern to search for
+     * @returns {Array} - Array of channels
+     */
+    async findByNamePattern(namePattern) {
+        try {
+            const channels = await this.Channel.find({
+                name: { $regex: namePattern, $options: 'i' }
+            }).sort({ name: 1 });
+            return channels;
+        } catch (error) {
+            Logger.error(`Error finding channels by name pattern "${namePattern}":`, error);
+            throw error;
+        }
     }
 }
 
