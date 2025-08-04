@@ -33,9 +33,7 @@ class DiscordBot {
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
-                GatewayIntentBits.GuildMembers
+                GatewayIntentBits.GuildMessages
             ]
         });
 
@@ -181,6 +179,12 @@ class DiscordBot {
             Logger.info('Discord bot started successfully');
         } catch (error) {
             Logger.error('Failed to start Discord bot:', error);
+            Logger.error('Error details:', {
+                message: error.message,
+                code: error.code,
+                status: error.status,
+                statusText: error.statusText
+            });
             process.exit(1);
         }
     }

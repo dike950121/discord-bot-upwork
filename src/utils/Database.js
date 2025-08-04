@@ -24,8 +24,6 @@ class Database {
             
             // Connect to MongoDB
             this.connection = await mongoose.connect(uri, {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
                 maxPoolSize: 10,
                 serverSelectionTimeoutMS: 5000,
                 socketTimeoutMS: 45000,

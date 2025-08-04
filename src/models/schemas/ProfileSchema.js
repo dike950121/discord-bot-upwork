@@ -18,8 +18,7 @@ const ProfileSchema = new mongoose.Schema({
     },
     skills: {
         type: [String],
-        default: [],
-        index: true
+        default: []
     },
     experience: {
         years: { type: Number, default: 0 },
@@ -29,13 +28,11 @@ const ProfileSchema = new mongoose.Schema({
     hourlyRate: {
         type: Number,
         required: true,
-        min: 0,
-        index: true
+        min: 0
     },
     categories: {
         type: [String],
-        default: [],
-        index: true
+        default: []
     },
     portfolio: {
         type: String,
